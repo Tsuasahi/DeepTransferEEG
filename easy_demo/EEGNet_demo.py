@@ -24,8 +24,10 @@
 ######################## this part imports all the libraries required to run this code #################################
 # install these dependecies using 'pip install xxx' (recommended), or via a conda virtual environment
 # note that sklearn is installed via 'pip install scikit-learn', not sklearn
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.metrics import accuracy_score
 from scipy.linalg import fractional_matrix_power
+import mne
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -370,17 +372,17 @@ def train_nn(args):
 
     ####################################Load Data from File#######################################
     try:
-        X = np.load('./' + args.data_name + '_X.npy')  # numpy array of (num_trials, num_channels, num_timesamples)  (1000, 59, 1000)
+        X = np.load('./data/' + args.data_name + '/X.npy')  # numpy array of (num_trials, num_channels, num_timesamples)  (1000, 59, 1000)
     except:
         # print('please put signal under path: ', './' + args.data_name + '_X.npy')
-        print('IMPORTANT! did not find signal data at path: ', './' + args.data_name + '_X.npy')
+        print('IMPORTANT! did not find signal data at path: ', './data/' + args.data_name + '/X.npy')
         print('IMPORTANT! creating random signal trials...')
         X = np.random.randn(1000, 59, 1000)
     try:
-        y = np.load('./' + args.data_name + '_labels.npy')
+        y = np.load('./data/' + args.data_name + '/labels.npy')
     except:
         # print('please put labels under path: ', './' + args.data_name + '_labels.npy')
-        print('IMPORTANT! did not find labels at path: ', './' + args.data_name + '_labels.npy')
+        print('IMPORTANT! did not find labels at path: ', './data/' + args.data_name + '/labels.npy')
         print('IMPORTANT! creating random labels...')
         y = np.random.randint(0, 2, size=(1000,))
 
@@ -431,6 +433,23 @@ def train_nn(args):
                 y_src = np.concatenate((y_src, aug_train_y))
                 print('after CR augmentation X_src.shape, y_src.shape:', X_src.shape, y_src.shape)
 
+    # this part conducts classic machine learning
+    # Common Spatial Patterns + Linear Discrimant Analysis
+    print('*' * 20 + 'Executing classic machine learning' + '*' * 20)
+    mne.set_log_level('warning')
+    csp = mne.decoding.CSP(n_components=10)
+    train_x_csp = csp.fit_transform(X_src, y_src)
+    test_x_csp = csp.transform(X_tar)
+
+    # classifier
+    clf = LinearDiscriminantAnalysis()
+    clf.fit(train_x_csp, y_src)
+    pred = clf.predict(test_x_csp)
+    score = np.round(accuracy_score(y_tar, pred) * 100, 2)
+    print('CSP+LDA classification accuracy:', np.round(score, 2))
+    print('*' * 20 + 'classic machine learning done' + '*' * 20)
+
+    print('*' * 20 + 'executing deep learning' + '*' * 20)
     Xs, Ys = torch.from_numpy(X_src).to(
         torch.float32), torch.from_numpy(y_src.reshape(-1, )).to(torch.long)
     if args.backbone == 'EEGNet':
@@ -580,7 +599,8 @@ def train_nn(args):
             epoch_loss = 0
             cnt = 0
 
-    print('Test Acc = {:.2f}'.format(acc))
+    print('EEGNet Test Accuracy = {:.2f}'.format(acc))
+    print('*' * 20 + 'deep learning done' + '*' * 20)
 
     # use this section if you want to save the trained model weights to disk
     # you can load the model weights as well
@@ -672,7 +692,7 @@ if __name__ == '__main__':
         # treat each subject/user as target/test subject once
         for idt in range(N):
             args.idt = idt
-            target_str = 'S' + str(idt)
+            target_str = 'S' + str(idt + 1)
             info_str = '=====================' + target_str + ' as Test Subject =========================='
             print(info_str)
 
