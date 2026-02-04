@@ -98,7 +98,7 @@ def data_process(dataset):
     return X, y, num_subjects, paradigm, sample_rate, ch_num
 
 
-def data_process_secondsession(dataset):
+def data_process_ctta(dataset):
     '''
 
     :param dataset: str, dataset name
@@ -121,10 +121,10 @@ def data_process_secondsession(dataset):
         sample_rate = 250
         ch_num = 22
 
-        # only use session T, remove session E
+        # only use session T, remove session E (E without label)
         indices = []
         for i in range(num_subjects):
-            indices.append(np.arange(288) + (576 * i) + 288) # use second sessions
+            indices.append(np.arange(288) + (576 * i))
         indices = np.concatenate(indices, axis=0)
         X = X[indices]
         y = y[indices]
@@ -142,11 +142,10 @@ def data_process_secondsession(dataset):
         sample_rate = 512
         ch_num = 15
 
-        # only use session train, remove session test
+        # only use session train, remove session test (test without label)
         indices = []
         for i in range(num_subjects):
-            #indices.append(np.arange(100) + (160 * i))
-            indices.append(np.arange(60) + (160 * i) + 100) # use second sessions
+            indices.append(np.arange(100) + (160 * i))
         indices = np.concatenate(indices, axis=0)
         X = X[indices]
         y = y[indices]
@@ -157,16 +156,15 @@ def data_process_secondsession(dataset):
         sample_rate = 512
         ch_num = 13
 
-        # only use session 1, remove session 2/3
+        # use all session
         indices = []
         for i in range(num_subjects):
-            # use second sessions
             if i in [7, 8, 9, 10]:
-                indices.append(np.arange(200) + (400 * 7) + 600 * (i - 7))
+                indices.append(np.arange(600) + (400 * 7) + 600 * (i - 7))
             elif i == 11:
-                indices.append(np.arange(200) + (400 * 7) + 600 * (i - 7))
+                indices.append(np.arange(600) + (400 * 7) + 600 * (i - 7))
             else:
-                indices.append(np.arange(200) + (400 * i))
+                indices.append(np.arange(400) + (400 * i))
 
         indices = np.concatenate(indices, axis=0)
         X = X[indices]
@@ -177,7 +175,7 @@ def data_process_secondsession(dataset):
         sample_rate = 250
         ch_num = 22
 
-        # only use session T, remove session E
+        # only use session T, remove session E (E without label)
         indices = []
         for i in range(num_subjects):
             indices.append(np.arange(288) + (576 * i))
@@ -192,9 +190,9 @@ def data_process_secondsession(dataset):
 
 
 def read_mi_combine_tar(args):
-    if 'ontinual' in args.method:  # TODO
+    if 'CTTA' in args.type:  # TODO
         # Continual TTA
-        X, y, num_subjects, paradigm, sample_rate, ch_num = data_process_secondsession(args.data)
+        X, y, num_subjects, paradigm, sample_rate, ch_num = data_process_ctta(args.data)
     else:
         X, y, num_subjects, paradigm, sample_rate, ch_num = data_process(args.data)
 

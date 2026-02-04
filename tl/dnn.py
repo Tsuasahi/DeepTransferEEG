@@ -2,6 +2,9 @@
 # @Time    : 2023/01/11
 # @Author  : Siyang Li
 # @File    : dnn.py
+
+# fix for numpy 1.24+ deprecated aliases
+import utils.numpy_fix
 import numpy as np
 import argparse
 import os
@@ -33,69 +36,143 @@ def train_target(args):
 
     optimizer_f = optim.Adam(netF.parameters(), lr=args.lr)
     optimizer_c = optim.Adam(netC.parameters(), lr=args.lr)
+    
+    train_type = args.type
 
-    max_iter = args.max_epoch * len(dset_loaders["source"])
+    if train_type == 'ctta':
+        train_loader = dset_loaders["target"]
+    else:
+        train_loader = dset_loaders["source"]
+
+    max_iter = args.max_epoch * len(train_loader)
     interval_iter = max_iter // args.max_epoch
     args.max_iter = max_iter
     iter_num = 0
     base_network.train()
 
-    while iter_num < max_iter:
-        try:
-            inputs_source, labels_source = next(iter_source)
-        except:
-            iter_source = iter(dset_loaders["source"])
-            inputs_source, labels_source = next(iter_source)
+    # add ctta fork, mainly copy from tta
+    if train_type == 'ctta':
+        best_loss = float('inf')
+        best_state = 0
+        bad_epochs = 0
+        patience = args.patience
+        min_delta = args.min_delta
+        step_loss = 0.0
+        step_cum = 0
 
-        if inputs_source.size(0) == 1:
-            continue
+        while iter_num < max_iter:
+            try:
+                inputs_target, labels_target = next(iter_target)
+            except:
+                iter_target = iter(train_loader)
+                inputs_target, labels_target = next(iter_target)
 
-        iter_num += 1
+            if inputs_target.size(0) == 1:
+                continue
 
-        features_source, outputs_source = base_network(inputs_source)
+            iter_num += 1
 
-        classifier_loss = criterion(outputs_source, labels_source)
+            features_source, outputs_target = base_network(inputs_target)
 
-        optimizer_f.zero_grad()
-        optimizer_c.zero_grad()
-        classifier_loss.backward()
-        optimizer_f.step()
-        optimizer_c.step()
+            classifier_loss = criterion(outputs_target, labels_target)
 
-        if iter_num % interval_iter == 0 or iter_num == max_iter:
-            base_network.eval()
+            optimizer_f.zero_grad()
+            optimizer_c.zero_grad()
+            classifier_loss.backward()
+            optimizer_f.step()
+            optimizer_c.step()
 
-            acc_t_te, _ = cal_acc_comb(dset_loaders["Target"], base_network, args=args)
-            # comment out last line and uncomment the next line for IEA results instead of offline EA results
-            # acc_t_te, _ = cal_acc_comb(dset_loaders["Target-Online-Prealigned"], base_network, args=args)
+            step_loss += classifier_loss.item()
+            step_cum += 1
 
-            log_str = 'Task: {}, Iter:{}/{}; Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
-            args.log.record(log_str)
-            print(log_str)
+            if iter_num % interval_iter == 0 or iter_num == max_iter:
+                avg_loss = step_loss / step_cum
 
-            base_network.train()
+                log_str = 'Task: {}, Iter:{}/{}; Loss = {:.5f}'.format(args.task_str, int(iter_num // len(train_loader)), int(max_iter // len(train_loader)), avg_loss)
+                args.log.record(log_str)
+                print(log_str)
 
-    print('Test Acc = {:.2f}%'.format(acc_t_te))
+                # early stopping
+                if avg_loss + min_delta < best_loss:
+                    best_loss = avg_loss
+                    best_state = {k: v.clone() for k, v in base_network.state_dict().items()}
+                    bad_epochs = 0
+                else:
+                    bad_epochs += 1
+                    if bad_epochs >= patience:
+                        break
+
+                step_loss = 0.0
+                step_cum = 0
+                base_network.train()
+
+        if best_state is not None:
+            base_network.load_state_dict(best_state)
+
+        print('Best Loss = {:.5f}'.format(best_loss))
+    else:
+        while iter_num < max_iter:
+            try:
+                inputs_source, labels_source = next(iter_source)
+            except:
+                iter_source = iter(train_loader)
+                inputs_source, labels_source = next(iter_source)
+
+            if inputs_source.size(0) == 1:
+                continue
+
+            iter_num += 1
+
+            features_source, outputs_source = base_network(inputs_source)
+
+            classifier_loss = criterion(outputs_source, labels_source)
+
+            optimizer_f.zero_grad()
+            optimizer_c.zero_grad()
+            classifier_loss.backward()
+            optimizer_f.step()
+            optimizer_c.step()
+
+            if iter_num % interval_iter == 0 or iter_num == max_iter:
+                base_network.eval()
+
+                acc_t_te, _ = cal_acc_comb(dset_loaders["Target"], base_network, args=args)
+                # comment out last line and uncomment the next line for IEA results instead of offline EA results
+                # acc_t_te, _ = cal_acc_comb(dset_loaders["Target-Online-Prealigned"], base_network, args=args)
+
+                log_str = 'Task: {}, Iter:{}/{}; Acc = {:.2f}%'.format(args.task_str, int(iter_num // len(dset_loaders["source"])), int(max_iter // len(dset_loaders["source"])), acc_t_te)
+                args.log.record(log_str)
+                print(log_str)
+
+                base_network.train()
+
+        print('Test Acc = {:.2f}%'.format(acc_t_te))
 
     print('saving model...')
 
-    if args.align:
-        torch.save(base_network.state_dict(),
-                   './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(args.SEED) + '.ckpt')
-    else:
-        torch.save(base_network.state_dict(),
-                   './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(args.SEED) + '_noEA' + '.ckpt')
+    # save with suffix '_CTTA' for ctta models
+    suffix=''
+    if not args.align:
+        suffix += '_noEA'
+    if args.type == 'ctta':
+        suffix += '_CTTA'
+    os.makedirs('./runs/', exist_ok=True)
+    torch.save(base_network.state_dict(),
+                   './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(args.SEED) + suffix + '.ckpt')
 
     gc.collect()
     if args.data_env != 'local':
         torch.cuda.empty_cache()
 
-    return acc_t_te
+    if train_type == 'ctta':
+        return best_loss
+    else:
+        return acc_t_te
 
 
 if __name__ == '__main__':
 
-    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4']
+    data_name_list = ['BNCI2014001']
 
     dct = pd.DataFrame(columns=['dataset', 'avg', 'std', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13'])
 
@@ -116,6 +193,18 @@ if __name__ == '__main__':
         # whether to use EA
         args.align = True
 
+        # training type ctta/tta
+        args.type = 'ctta'
+
+        # early stopping parameter for ctta
+        args.patience = 10
+        args.min_delta = 1e-5
+
+        # train specific subject for ctta, None is all subjects
+        args.ctta_subj = None
+        if args.ctta_subj is not None:
+            args.ctta_subj = int(args.ctta_subj)
+
         # learning rate
         args.lr = 0.001
 
@@ -123,7 +212,10 @@ if __name__ == '__main__':
         args.batch_size = 32
 
         # training epochs
-        args.max_epoch = 100
+        if  args.type == 'ctta':
+            args.max_epoch = 1000
+        else:
+            args.max_epoch = 100
 
         # GPU device id
         try:
@@ -136,7 +228,7 @@ if __name__ == '__main__':
         total_acc = []
 
         # train multiple randomly initialized models
-        for s in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]:
+        for s in [1]:
             args.SEED = s
 
             fix_random_seed(args.SEED)
@@ -153,52 +245,72 @@ if __name__ == '__main__':
             my_log = LogRecord(args)
             my_log.log_init()
             my_log.record('=' * 50 + '\n' + os.path.basename(__file__) + '\n' + '=' * 50)
+            
+            if args.type == 'ctta' and args.ctta_subj is not None:
+                subjs = [args.ctta_subj]
+            else:
+                subjs = range(N)
+            # ctta fork
+            if args.type == 'ctta':
+                for idt in subjs:
+                    args.idt = idt
+                    target_str = 'Target_S' + str(idt)
+                    args.task_str = target_str
+                    info_str = '\n========================== Transfer to S' + str(idt) + ' =========================='
+                    print(info_str)
+                    my_log.record(info_str)
+                    args.log = my_log
 
-            sub_acc_all = np.zeros(N)
-            for idt in range(N):
-                args.idt = idt
-                source_str = 'Except_S' + str(idt)
-                target_str = 'S' + str(idt)
-                args.task_str = source_str + '_2_' + target_str
-                info_str = '\n========================== Transfer to ' + target_str + ' =========================='
-                print(info_str)
-                my_log.record(info_str)
-                args.log = my_log
+                    best_loss = train_target(args)
+                    args.log.record('Best Loss: {:.5f}'.format(best_loss))
+            else:
+                sub_acc_all = np.zeros(N)
+                for idt in subjs:
+                    args.idt = idt
+                    source_str = 'Except_S' + str(idt)
+                    target_str = 'S' + str(idt)
+                    args.task_str = source_str + '_2_' + target_str
+                    info_str = '\n========================== Transfer to ' + target_str + ' =========================='
+                    print(info_str)
+                    my_log.record(info_str)
+                    args.log = my_log
 
-                sub_acc_all[idt] = train_target(args)
-            print('Sub acc: ', np.round(sub_acc_all, 3))
-            print('Avg acc: ', np.round(np.mean(sub_acc_all), 3))
-            total_acc.append(sub_acc_all)
+                    sub_acc_all[idt] = train_target(args)
+                print('Sub acc: ', np.round(sub_acc_all, 3))
+                print('Avg acc: ', np.round(np.mean(sub_acc_all), 3))
+                total_acc.append(sub_acc_all)
 
-            acc_sub_str = str(np.round(sub_acc_all, 3).tolist())
-            acc_mean_str = str(np.round(np.mean(sub_acc_all), 3).tolist())
-            args.log.record("\n==========================================")
-            args.log.record(acc_sub_str)
-            args.log.record(acc_mean_str)
+                acc_sub_str = str(np.round(sub_acc_all, 3).tolist())
+                acc_mean_str = str(np.round(np.mean(sub_acc_all), 3).tolist())
+                args.log.record("\n==========================================")
+                args.log.record(acc_sub_str)
+                args.log.record(acc_mean_str)
 
-        args.log.record('\n' + '#' * 20 + 'final results' + '#' * 20)
+        if args.type != 'ctta':
+            args.log.record('\n' + '#' * 20 + 'final results' + '#' * 20)
 
-        print(str(total_acc))
+            print(str(total_acc))
 
-        args.log.record(str(total_acc))
+            args.log.record(str(total_acc))
 
-        subject_mean = np.round(np.average(total_acc, axis=0), 5)
-        total_mean = np.round(np.average(np.average(total_acc)), 5)
-        total_std = np.round(np.std(np.average(total_acc, axis=1)), 5)
+            subject_mean = np.round(np.average(total_acc, axis=0), 5)
+            total_mean = np.round(np.average(np.average(total_acc)), 5)
+            total_std = np.round(np.std(np.average(total_acc, axis=1)), 5)
 
-        print(subject_mean)
-        print(total_mean)
-        print(total_std)
+            print(subject_mean)
+            print(total_mean)
+            print(total_std)
 
-        args.log.record(str(subject_mean))
-        args.log.record(str(total_mean))
-        args.log.record(str(total_std))
+            args.log.record(str(subject_mean))
+            args.log.record(str(total_mean))
+            args.log.record(str(total_std))
 
-        result_dct = {'dataset': data_name, 'avg': total_mean, 'std': total_std}
-        for i in range(len(subject_mean)):
-            result_dct['s' + str(i)] = subject_mean[i]
+            result_dct = {'dataset': data_name, 'avg': total_mean, 'std': total_std}
+            for i in range(len(subject_mean)):
+                result_dct['s' + str(i)] = subject_mean[i]
 
-        dct = dct.append(result_dct, ignore_index=True)
-
-    # save results to csv
-    dct.to_csv('./logs/' + str(args.method) + ".csv")
+            dct = dct.append(result_dct, ignore_index=True)
+        
+        if args.type != 'ctta':
+            # save results to csv
+            dct.to_csv('./logs/' + str(args.method) + ".csv")
