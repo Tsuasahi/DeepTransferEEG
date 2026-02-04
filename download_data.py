@@ -1,13 +1,19 @@
+import tl.utils.numpy_fix as np
 import os
-
-import numpy as np
+from concurrent.futures import ThreadPoolExecutor
+import pandas as pd
 import moabb
 
-from moabb.datasets import BNCI2014001, BNCI2014002, BNCI2015001
-from moabb.paradigms import MotorImagery, P300
+from moabb.datasets import (BNCI2014001, BNCI2014002, BNCI2015001, Nakanishi2015, Wang2016, MAMEM1, MAMEM2, MAMEM3, Lee2019_SSVEP)
+from moabb.paradigms import MotorImagery, P300, SSVEP
 
 
-def dataset_to_file(dataset_name, data_save):
+def download_subject(paradigm, dataset, subject):
+    X, labels, meta = paradigm.get_data(dataset=dataset, subjects=[subject])
+    return (X, labels, meta)
+
+
+def dataset_to_file(dataset_name, data_save=True):
     moabb.set_log_level("ERROR")
     if dataset_name == 'BNCI2014001':
         dataset = BNCI2014001()
@@ -21,14 +27,50 @@ def dataset_to_file(dataset_name, data_save):
         dataset = BNCI2015001()
         paradigm = MotorImagery(n_classes=2)
         # (5600, 13, 2561) (5600,) 512Hz 12subjects * 2 classes * (200 + 200 + (200 for Subj 8/9/10/11)) trials * (2/3)sessions
+    elif dataset_name == 'Nakanishi2015':
+        dataset = Nakanishi2015()
+        paradigm = SSVEP(n_classes=12)
+
+    # maybe Connection refused
+    elif dataset_name == 'Wang2016':
+        dataset = Wang2016()
+        paradigm = SSVEP(n_classes=40)
+
+    # 403 error at moabb 0.4.6
+    elif dataset_name == 'MAMEM1':
+        dataset = MAMEM1()
+        paradigm = SSVEP(n_classes=5)
+    elif dataset_name == 'MAMEM2':
+        dataset = MAMEM2()
+        paradigm = SSVEP(n_classes=5)
+    elif dataset_name == 'MAMEM3':
+        dataset = MAMEM3()
+        paradigm = SSVEP(n_classes=4)
+
+    elif dataset_name == 'Lee2019_SSVEP':
+        dataset = Lee2019_SSVEP()
+        paradigm = SSVEP(n_classes=4)
 
     if data_save:
-        print('preparing ' + str(dataset_name) + ' data...')
-        X, labels, meta = paradigm.get_data(dataset=dataset, subjects=dataset.subject_list[:])
-        ar_unique, cnts = np.unique(labels, return_counts=True)
-        print("labels:", ar_unique)
-        print("Counts:", cnts)
-        print(X.shape, labels.shape)
+        print(f'preparing ' + (dataset_name) + ' data...')
+        results = []
+        subjects = dataset.subject_list[:]
+        
+        # multi threads download
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            tasks = [executor.submit(download_subject, paradigm, dataset, sub) for sub in subjects]
+            
+            for task in tasks:
+                res = task.result()
+                if res is not None:
+                    results.append(res)
+
+        xs_list, labels_list, meta_list = zip(*results)
+        
+        X = np.concatenate(xs_list, axis=0)
+        labels = np.concatenate(labels_list, axis=0)
+        meta = pd.concat(meta_list, ignore_index=True)
+        
         if not os.path.exists('./data/'):
             os.makedirs('./data/')
         if not os.path.exists('./data/' + dataset_name + '/'):
@@ -36,7 +78,8 @@ def dataset_to_file(dataset_name, data_save):
         np.save('./data/' + dataset_name + '/X', X)
         np.save('./data/' + dataset_name + '/labels', labels)
         meta.to_csv('./data/' + dataset_name + '/meta.csv')
-        print('done!')
+        print(f'{dataset_name} done!')
+
     else:
         if isinstance(paradigm, MotorImagery):
             X, labels, meta = paradigm.get_data(dataset=dataset, subjects=[dataset.subject_list[0]], return_epochs=True)
@@ -44,13 +87,17 @@ def dataset_to_file(dataset_name, data_save):
         elif isinstance(paradigm, P300):
             X, labels, meta = paradigm.get_data(dataset=dataset, subjects=[dataset.subject_list[0]], return_epochs=True)
             return X.info
-
+        elif isinstance(paradigm, SSVEP):
+            X, labels, meta = paradigm.get_data(dataset=dataset, subjects=[dataset.subject_list[0]], return_epochs=True)
+            return X.info
 
 if __name__ == '__main__':
 
-    datasets = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001']
+    datasets = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'Nakanishi2015','Lee2019_SSVEP']
+    
     for dataset_name in datasets:
-        info = dataset_to_file(dataset_name, data_save=True)
+        dataset_to_file(dataset_name, data_save=True)
+    
 
     '''
     BNCI2014001
