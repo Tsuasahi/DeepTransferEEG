@@ -16,25 +16,38 @@ If you just want to know how Euclidean Alignment was done, go [here](https://git
 #### 1. Install Dependencies
 
 Install Conda dependencies based on  `environment.yml` file.
+**Note that edit the pyyaml configuration to match your platform.**
+**Pre-compiled .whl files for pyyaml 5.4.1 to avoid build errors on python310.**
+```sh
+conda env create -f environment.yml
+```
+
+then
+```sh
+conda activate DeepTransferEEG
+```
 
 #### 2. Download Datasets
 
 To download datasets, run   
 ```sh 
-sh prepare_data.sh
+python ./download_data.py
 ```   
 
 #### (Optional) 3. Training Source Subject Models
 
 We have provided the source models (baseline source-combined EA+EEGNet) under ./runs, but feel free to train them from scratch.  
-To train your own source models, run   
-```sh 
-sh train.sh
-```   
-or   
+To train your own source models, run    
 ```sh 
 python ./tl/dnn.py
 ```  
+
+Use GPU for training (e.g., using GPU 0), run
+```sh 
+python ./tl/dnn.py 0
+```  
+
+To train models for **CTTA** test, please edit the `args.type` to `ctta` in `tl/dnn.py`.
 
 Note that such source models serve as EEGNet baselines, and are also used in SFUDA and TTA approaches as the initializations. So to save time for TTA/SFUDA for target subject adaptation, it is better to have them ready first.  
 
@@ -42,11 +55,13 @@ Note also that we did not provide non-EA models, and please change code accordin
 
 #### 4. Transfer Learning for Target Subject
 
-To test the T-TIME algorithm, run   
+To test **CTTA** method, please edit the `args.type` to `ctta`
+To test all Online TL methods, run
 ```sh 
-sh test.sh
+python ./test.py
 ```   
-or   
+
+To test the T-TIME algorithm, run   
 ```sh 
 python ./tl/ttime.py
 ```   
