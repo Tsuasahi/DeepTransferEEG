@@ -2,6 +2,10 @@
 # @Time    : 2024/2/4
 # @Author  : Siyang Li
 # @File    : delta.py
+
+# fix for numpy 1.24+ deprecated aliases
+import re
+import utils.numpy_fix
 import numpy as np
 import argparse
 import os
@@ -139,13 +143,13 @@ def DELTA(loader, model, args, balanced=True):
                     w[b] = 1 / (z[pl[b]] + args.epsilon)
                 for b in range(batch_test.shape[0]):
                     w_bar[b] = args.test_batch * w[b] / torch.sum(w)
-                msoftmax_weighted = torch.mm(softmax_out.T.cpu(), torch.tensor(w_bar).to(torch.float32).reshape(batch_test.shape[0], 1)) / batch_test.shape[0]
+                msoftmax_weighted = torch.mm(softmax_out.T.cpu(), w_bar.to(torch.float32).reshape(batch_test.shape[0], 1)) / batch_test.shape[0]
 
                 args.lambda_z = 0.9  # DELTA-DOT momentum
 
                 if (i + 1) % args.test_batch == 0:
                     for c in range(len(z)):
-                        z[c] = z[c] * args.lambda_z + msoftmax[c].cpu() * (1 - args.lambda_z)
+                        z[c] = z[c] * args.lambda_z + float(msoftmax[c].detach().cpu()) * (1 - args.lambda_z)
 
                 gentropy_loss = torch.sum(msoftmax_weighted * torch.log(msoftmax_weighted + args.epsilon))
 
@@ -185,12 +189,25 @@ def train_target(args):
     print('X_src, y_src, X_tar, y_tar:', X_src.shape, y_src.shape, X_tar.shape, y_tar.shape)
     dset_loaders = data_loader(X_src, y_src, X_tar, y_tar, args)
 
-    netF, netC = backbone_net(args, return_type='xy')
-    if args.data_env != 'local':
-        netF, netC = netF.cuda(), netC.cuda()
-    base_network = nn.Sequential(netF, netC)
+    if args.type == 'ctta' and args.ctta_model is not None:
+        base_network = args.ctta_model
+    else:
+        netF, netC = backbone_net(args, return_type='xy')
+        if args.data_env != 'local':
+            netF, netC = netF.cuda(), netC.cuda()
+        base_network = nn.Sequential(netF, netC)
 
-    if args.max_epoch == 0:
+    if args.type == 'ctta':
+        if  args.ctta_model is not None:
+            pass
+        else:
+            if args.data_env != 'local':
+                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '/' + str(args.backbone) +
+                                                        '_S' + str(args.ctta_subj) + '_seed' + str(args.SEED) + extra_string + '_CTTA.ckpt'))
+            else:
+                base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '/' + str(args.backbone) +
+                                                        '_S' + str(args.ctta_subj) + '_seed' + str(args.SEED) + extra_string + '_CTTA.ckpt', map_location=torch.device('cpu')))
+    elif args.max_epoch == 0:
         if args.align:
             if args.data_env != 'local':
                 base_network.load_state_dict(torch.load('./runs/' + str(args.data_name) + '/' + str(args.backbone) +
@@ -276,8 +293,14 @@ def train_target(args):
     else:
         print('Test AUC = {:.2f}%'.format(acc_t_te))
 
-    torch.save(base_network.state_dict(), './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(args.idt) + '_seed' + str(
-        args.SEED) + extra_string + '_adapted' + '.ckpt')
+    if args.type == 'ctta':
+        save_idt = args.ctta_subj
+        suffix = '_CTTA_' + str(args.method)
+    else:
+        save_idt = args.idt
+        suffix = ''
+    torch.save(base_network.state_dict(), './runs/' + str(args.data_name) + '/' + str(args.backbone) + '_S' + str(save_idt) + '_seed' + str(
+        args.SEED) + extra_string + suffix + '_adapted' + '.ckpt')
 
     # save the predictions for ensemble
     with open('./logs/' + str(args.data_name) + '_' + str(args.method) + '_seed_' + str(args.SEED) +"_pred.csv", 'a') as f:
@@ -288,7 +311,27 @@ def train_target(args):
     if args.data_env != 'local':
         torch.cuda.empty_cache()
 
+    if args.type == 'ctta':
+        args.ctta_model = base_network
+
     return acc_t_te
+
+
+def get_ctta_subjs(args):
+    runs_dir = './runs/' + str(args.data_name) + '/'
+    trained = set()
+    if args.align:
+        pattern = re.compile(rf"^{args.backbone}_S(\d+)_seed{args.SEED}_CTTA\.ckpt$")
+    else:
+        pattern = re.compile(rf"^{args.backbone}_S(\d+)_seed{args.SEED}_noEA_CTTA\.ckpt$")
+
+    for fname in os.listdir(runs_dir):
+        m = pattern.match(fname)
+        if not m:
+            continue
+        trained.add(int(m.group(1)))
+
+    return sorted(trained)
 
 
 if __name__ == '__main__':
@@ -333,16 +376,23 @@ if __name__ == '__main__':
         # temperature rescaling, for test entropy calculation
         t = 2
 
+        # training type ctta/tta
+        type = 'ctta'
+
+        # set trained subject for ctta, None is auto
+        ctta_subj = None
+
         # whether to test balanced or imbalanced (2:1) target subject
-        balanced = False
+        balanced = True
 
         # whether to record running time
         calc_time = False
 
         args = argparse.Namespace(feature_deep_dim=feature_deep_dim, align=align, lr=lr, t=t, max_epoch=max_epoch,
-                                  trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
-                                  N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
-                                  paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced)
+                      trial_num=trial_num, time_sample_num=time_sample_num, sample_rate=sample_rate,
+                      N=N, chn=chn, class_num=class_num, stride=stride, steps=steps, calc_time=calc_time,
+                      paradigm=paradigm, test_batch=test_batch, data_name=data_name, balanced=balanced,
+                      type=type, ctta_subj=ctta_subj)
 
         args.method = 'DELTA-TTA'
         args.backbone = 'EEGNet'
@@ -360,7 +410,7 @@ if __name__ == '__main__':
         total_acc = []
 
         # update multiple models, independently, from the source models
-        for s in [1, 2, 3, 4, 5]:
+        for s in [1]:
             args.SEED = s
 
             fix_random_seed(args.SEED)
@@ -378,51 +428,79 @@ if __name__ == '__main__':
             my_log.log_init()
             my_log.record('=' * 50 + '\n' + os.path.basename(__file__) + '\n' + '=' * 50)
 
-            sub_acc_all = np.zeros(N)
-            for idt in range(N):
-                args.idt = idt
-                source_str = 'Except_S' + str(idt)
-                target_str = 'S' + str(idt)
-                args.task_str = source_str + '_2_' + target_str
-                info_str = '\n========================== Transfer to ' + target_str + ' =========================='
-                print(info_str)
-                my_log.record(info_str)
-                args.log = my_log
+            if args.type == 'ctta':
+                trained_subjs = get_ctta_subjs(args)
+                print('CTTA trained subjects: ', trained_subjs)
+                if args.ctta_subj is None:
+                    base_subjects = trained_subjs
+                else:
+                    base_subjects = [args.ctta_subj]
+                if args.test_batch != 1:
+                    args.test_batch = 1
+                if args.stride != 1:
+                    args.stride = 1
+            else:
+                base_subjects = [None]
 
-                sub_acc_all[idt] = train_target(args)
-            print('Sub acc: ', np.round(sub_acc_all, 3))
-            print('Avg acc: ', np.round(np.mean(sub_acc_all), 3))
-            total_acc.append(sub_acc_all)
+            for base_subj in base_subjects:
+                if args.type == 'ctta':
+                    args.ctta_subj = base_subj
+                    print('CTTA base subject: {}'.format(base_subj))
+                    subjs = [i for i in range(N) if i != base_subj]
+                    print('CTTA adapting subjects: {}'.format(subjs))
+                    args.ctta_model = None
+                else:
+                    subjs = range(N)
 
-            acc_sub_str = str(np.round(sub_acc_all, 3).tolist())
-            acc_mean_str = str(np.round(np.mean(sub_acc_all), 3).tolist())
-            args.log.record("\n==========================================")
-            args.log.record(acc_sub_str)
-            args.log.record(acc_mean_str)
+                sub_acc_all = np.zeros(N)
+                for idt in subjs:
+                    args.idt = idt
+                    source_str = 'Except_S' + str(idt)
+                    target_str = 'S' + str(idt)
+                    if args.type != 'ctta':
+                        args.task_str = source_str + '_2_' + target_str
+                    else:
+                        args.task_str = 'CTTA_' + target_str
+                    info_str = '\n========================== Transfer to ' + target_str + ' =========================='
+                    print(info_str)
+                    my_log.record(info_str)
+                    args.log = my_log
 
-        args.log.record('\n' + '#' * 20 + 'final results' + '#' * 20)
+                    sub_acc_all[idt] = train_target(args)
+                print('Sub acc: ', np.round(sub_acc_all, 3))
+                print('Avg acc: ', np.round(np.mean(sub_acc_all), 3))
+                total_acc.append(sub_acc_all)
 
-        print(str(total_acc))
+                acc_sub_str = str(np.round(sub_acc_all, 3).tolist())
+                acc_mean_str = str(np.round(np.mean(sub_acc_all), 3).tolist())
+                args.log.record("\n==========================================")
+                args.log.record(acc_sub_str)
+                args.log.record(acc_mean_str)
 
-        args.log.record(str(total_acc))
+        if len(total_acc) > 0:
+            args.log.record('\n' + '#' * 20 + 'final results' + '#' * 20)
 
-        subject_mean = np.round(np.average(total_acc, axis=0), 5)
-        total_mean = np.round(np.average(np.average(total_acc)), 5)
-        total_std = np.round(np.std(np.average(total_acc, axis=1)), 5)
+            print(str(total_acc))
 
-        print(subject_mean)
-        print(total_mean)
-        print(total_std)
+            args.log.record(str(total_acc))
 
-        args.log.record(str(subject_mean))
-        args.log.record(str(total_mean))
-        args.log.record(str(total_std))
+            subject_mean = np.round(np.average(total_acc, axis=0), 5)
+            total_mean = np.round(np.average(np.average(total_acc)), 5)
+            total_std = np.round(np.std(np.average(total_acc, axis=1)), 5)
 
-        result_dct = {'dataset': data_name, 'avg': total_mean, 'std': total_std}
-        for i in range(len(subject_mean)):
-            result_dct['s' + str(i)] = subject_mean[i]
+            print(subject_mean)
+            print(total_mean)
+            print(total_std)
 
-        dct = dct.append(result_dct, ignore_index=True)
+            args.log.record(str(subject_mean))
+            args.log.record(str(total_mean))
+            args.log.record(str(total_std))
+
+            result_dct = {'dataset': data_name, 'avg': total_mean, 'std': total_std}
+            for i in range(len(subject_mean)):
+                result_dct['s' + str(i)] = subject_mean[i]
+
+            dct = dct.append(result_dct, ignore_index=True)
 
     # save results to csv
     dct.to_csv('./logs/' + str(args.method) + ".csv")
