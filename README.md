@@ -15,8 +15,8 @@ If you just want to know how Euclidean Alignment was done, go [here](https://git
 
 #### 1. Install Dependencies
 
-Install Conda dependencies based on  `environment.yml` file.
-**Note that edit the pyyaml configuration to match your platform.**
+Install Conda dependencies based on  `environment.yml` file.  
+**Note that edit the pyyaml configuration to match your platform.**  
 **Pre-compiled .whl files for pyyaml 5.4.1 to avoid build errors on python310.**
 ```sh
 conda env create -f environment.yml
@@ -55,7 +55,7 @@ Note also that we did not provide non-EA models, and please change code accordin
 
 #### 4. Transfer Learning for Target Subject
 
-To test **CTTA** method, please edit the `args.type` to `ctta`
+To test **CTTA** method, please edit the `args.type` to `ctta`  
 To test all Online TL methods, run
 ```sh 
 python ./test.py
