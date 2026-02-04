@@ -2,6 +2,19 @@ import torch
 import torch.nn as nn
 import sys
 
+class ConsistentDropout(nn.Module):
+    def __init__(self, p=0.5):
+        super().__init__()
+        self.p = p
+
+    def forward(self, x):
+        if self.training:
+            # Generate mask on CPU to ensure consistency across CPU/GPU runs
+            mask = torch.ones_like(x).cpu()
+            mask = nn.functional.dropout(mask, p=self.p, training=True)
+            return x * mask.to(x.device)
+        return x
+
 class EEGNet(nn.Module):
 
     def __init__(self,
@@ -45,7 +58,7 @@ class EEGNet(nn.Module):
             nn.BatchNorm2d(num_features=self.F1 * self.D),
             nn.ELU(),
             nn.AvgPool2d((1, 4)),
-            nn.Dropout(p=self.dropoutRate))
+            ConsistentDropout(p=self.dropoutRate))
 
         self.block2 = nn.Sequential(
             nn.ZeroPad2d((7, 8, 0, 0)),
@@ -64,7 +77,7 @@ class EEGNet(nn.Module):
             nn.BatchNorm2d(num_features=self.F2),
             nn.ELU(),
             nn.AvgPool2d((1, 8)),
-            nn.Dropout(self.dropoutRate))
+            ConsistentDropout(self.dropoutRate))
 
         self.classifier_block = nn.Sequential(
             nn.Linear(in_features=self.F2 * (self.Samples // (4 * 8)),
@@ -122,7 +135,7 @@ class EEGNet_feature(nn.Module):
             nn.BatchNorm2d(num_features=self.F1 * self.D),
             nn.ELU(),
             nn.AvgPool2d((1, 4)),
-            nn.Dropout(p=self.dropoutRate))
+            ConsistentDropout(p=self.dropoutRate))
 
         self.block2 = nn.Sequential(
             nn.ZeroPad2d((7, 8, 0, 0)),
@@ -141,7 +154,7 @@ class EEGNet_feature(nn.Module):
             nn.BatchNorm2d(num_features=self.F2),
             nn.ELU(),
             nn.AvgPool2d((1, 8)),
-            nn.Dropout(self.dropoutRate))
+            ConsistentDropout(self.dropoutRate))
 
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
