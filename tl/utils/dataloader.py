@@ -121,13 +121,7 @@ def data_process_ctta(dataset):
         sample_rate = 250
         ch_num = 22
 
-        # only use session T, remove session E (E without label)
-        indices = []
-        for i in range(num_subjects):
-            indices.append(np.arange(288) + (576 * i))
-        indices = np.concatenate(indices, axis=0)
-        X = X[indices]
-        y = y[indices]
+        # use all session
 
         # only use two classes [left_hand, right_hand]
         indices = []
@@ -142,13 +136,7 @@ def data_process_ctta(dataset):
         sample_rate = 512
         ch_num = 15
 
-        # only use session train, remove session test (test without label)
-        indices = []
-        for i in range(num_subjects):
-            indices.append(np.arange(100) + (160 * i))
-        indices = np.concatenate(indices, axis=0)
-        X = X[indices]
-        y = y[indices]
+        # use all session
 
     elif dataset == 'BNCI2015001':
         paradigm = 'MI'
@@ -157,18 +145,7 @@ def data_process_ctta(dataset):
         ch_num = 13
 
         # use all session
-        indices = []
-        for i in range(num_subjects):
-            if i in [7, 8, 9, 10]:
-                indices.append(np.arange(600) + (400 * 7) + 600 * (i - 7))
-            elif i == 11:
-                indices.append(np.arange(600) + (400 * 7) + 600 * (i - 7))
-            else:
-                indices.append(np.arange(400) + (400 * i))
 
-        indices = np.concatenate(indices, axis=0)
-        X = X[indices]
-        y = y[indices]
     elif dataset == 'BNCI2014001-4':
         paradigm = 'MI'
         num_subjects = 9
@@ -190,7 +167,7 @@ def data_process_ctta(dataset):
 
 
 def read_mi_combine_tar(args):
-    if 'CTTA' in args.type:  # TODO
+    if 'ctta' in args.type:  # TODO
         # Continual TTA
         X, y, num_subjects, paradigm, sample_rate, ch_num = data_process_ctta(args.data)
     else:

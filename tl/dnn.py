@@ -57,6 +57,7 @@ def train_target(args):
         bad_epochs = 0
         patience = args.patience
         min_delta = args.min_delta
+        min_iter = args.min_iter * interval_iter
         step_loss = 0.0
         step_cum = 0
 
@@ -93,14 +94,15 @@ def train_target(args):
                 print(log_str)
 
                 # early stopping
-                if avg_loss + min_delta < best_loss:
-                    best_loss = avg_loss
-                    best_state = {k: v.clone() for k, v in base_network.state_dict().items()}
-                    bad_epochs = 0
-                else:
-                    bad_epochs += 1
-                    if bad_epochs >= patience:
-                        break
+                if iter_num >= min_iter:
+                    if avg_loss + min_delta < best_loss:
+                        best_loss = avg_loss
+                        best_state = {k: v.clone() for k, v in base_network.state_dict().items()}
+                        bad_epochs = 0
+                    else:
+                        bad_epochs += 1
+                        if bad_epochs >= patience:
+                            break
 
                 step_loss = 0.0
                 step_cum = 0
@@ -199,6 +201,7 @@ if __name__ == '__main__':
         # early stopping parameter for ctta
         args.patience = 10
         args.min_delta = 1e-5
+        args.min_iter = 100
 
         # train specific subject for ctta, None is all subjects
         args.ctta_subj = None

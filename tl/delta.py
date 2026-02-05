@@ -336,7 +336,7 @@ def get_ctta_subjs(args):
 
 if __name__ == '__main__':
 
-    data_name_list = ['BNCI2014001', 'BNCI2014002', 'BNCI2015001', 'BNCI2014001-4']
+    data_name_list = ['BNCI2014001']
 
     dct = pd.DataFrame(columns=['dataset', 'avg', 'std', 's0', 's1', 's2', 's3', 's4', 's5', 's6', 's7', 's8', 's9', 's10', 's11', 's12', 's13'])
 
