@@ -446,10 +446,6 @@ if __name__ == '__main__':
                     base_subjects = trained_subjs
                 else:
                     base_subjects = [args.ctta_subj]
-                if args.test_batch != 1:
-                    args.test_batch = 1
-                if args.stride != 1:
-                    args.stride = 1
             else:
                 base_subjects = [None]
 
